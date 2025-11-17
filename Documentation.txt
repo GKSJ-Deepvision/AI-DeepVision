@@ -1,5 +1,26 @@
 Crowd Monitoring Project
 
+Project Setup : 
+
+=> Created virtual environment for the Project
+=> install all the modules that are : 
+torch
+torchvision
+opencv-python
+numpy
+pandas
+matplotlib
+pillow
+scipy
+scikit-learn
+plotly
+tqdm
+flask
+streamlit
+twilio
+requests
+pyyaml
+
 ShanghaiTech Dataset : 
 	
 => The dataset was proposed in the paper “Single‑Image Crowd Counting via Multi‑Column Convolutional Neural Network” (Zhang et al., 2016). 
@@ -17,19 +38,19 @@ ShanghaiTech Dataset :
 => The folder structure looks like :
 	ShanghaiTech/
     	    |-Part_A/
-        	|-train_data/
-            	     |-images/
-            	     |-ground_truth/
-        	|-test_data/
-            	     |-images/
-            	     |-ground_truth/
+        		|-train_data/
+            	    |-images/
+            	    |-ground_truth/
+        		|-test_data/
+            	    |-images/
+            	    |-ground_truth/
             |-Part_B/
-        	|-train_data/
-            	     |-images/
-            	     |-ground_truth/
-        	|-test_data/
-            	     |-images/
-                     |-ground_truth/
+        		|-train_data/
+            	    |-images/
+            	    |-ground_truth/
+        		|-test_data/
+            	    |-images/
+                    |-ground_truth/
 
 Preprocessing : 
 
