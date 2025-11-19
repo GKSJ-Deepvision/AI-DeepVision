@@ -1,0 +1,18 @@
+# Ignore dataset folder
+Dataset/
+
+# Python cache
+__pycache__/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual environment
+venv/
+
+# System
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
