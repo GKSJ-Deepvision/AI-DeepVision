@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # AI-DeepVision
 🧠 Crowd Monitoring & Density Map Generation
 <<<<<<< HEAD
@@ -162,6 +163,8 @@ For major changes, please open an issue first.
 
 Apache License.
 >>>>>>> d0b11c0d20e694230dad9651b89eefa626d81657
+=======
+>>>>>>> c1b17d974aafa6edf6807117022b515b33ac94cd
 
 A modular, research-grade implementation for exploring, visualizing, and preprocessing the ShanghaiTech Crowd Counting Dataset. This project prepares the dataset for training deep learning models such as CSRNet, MCNN, CANNet, and SANet.
 

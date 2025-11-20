@@ -9,14 +9,13 @@ from torch.utils.data import Dataset
 
 from .utils import load_image, load_gt_points, generate_density_map
 
-
 class ShanghaiTechDataset(Dataset):
 
     def __init__(self, root_dir, img_size=(256, 256), density_mode="adaptive",
              fixed_sigma=15):
 
         self.img_paths = sorted(glob(os.path.join(root_dir, "images", "*.jpg")))
-        self.gt_paths  = sorted(glob(os.path.join(root_dir, "ground-truth", "*.mat")))
+        self.gt_paths = sorted(glob(os.path.join(root_dir, "ground-truth", "*.mat")))
 
         assert len(self.img_paths) == len(self.gt_paths), "Images & GT Count Mismatch"
 
@@ -58,7 +57,7 @@ class ShanghaiTechDataset(Dataset):
         density_down *= (8 * 8)
 
         # Convert to tensors
-        # -------------------------------
+         
         img_tensor = torch.tensor(img_resized / 255.0).permute(2, 0, 1).float()
 
         # ImageNet normalization
