@@ -57,7 +57,7 @@ class ShanghaiTechDataset(Dataset):
         # 6. Multiply by 64 to preserve total count
         density_down *= (8 * 8)
 
-            # Convert to tensors
+        # Convert to tensors
         # -------------------------------
         img_tensor = torch.tensor(img_resized / 255.0).permute(2, 0, 1).float()
 
