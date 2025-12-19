@@ -4,8 +4,7 @@ import torch.nn as nn
 import numpy as np
 import gradio as gr
 from torchvision import models
-
-
+  
 #  CSRNET MODEL (Same architecture as training code)
 class CSRNet(nn.Module):
     def __init__(self):
@@ -44,13 +43,14 @@ def preprocess_frame(frame):
     frame = torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0).float()
     return frame
 
-
+ 
+ 
 #  LOAD MODEL
 device = "cpu"
 model = CSRNet().to(device)
 
 print("Loading model...")
-state = torch.load("model_3.pth", map_location=device)
+state = torch.load("model_5.pth", map_location=device)
 clean_state = {}
 
 for k, v in state.items():
