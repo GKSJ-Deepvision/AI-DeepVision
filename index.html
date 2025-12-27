@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CSRNet Crowd Counting</title>
+</head>
+<body style="text-align:center; font-family: Arial;">
+<h1>CSRNet Crowd Counting Dashboard</h1>
+<form method="POST" enctype="multipart/form-data">
+    <input type="file" name="file" required>
+    <br><br>
+    <button type="submit">Upload Image / Video</button>
+</form>
+{% if result %}
+    <h2>Estimated Crowd Count: {{ result }}</h2>
+{% endif %}
+{% if image %}
+    <h3>Density Heatmap</h3>
+    <img src="{{ image }}" width="700">
+{% endif %}
+</body>
+</html>
