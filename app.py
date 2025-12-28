@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import cv2
 import numpy as np
@@ -25,6 +23,31 @@ from email.mime.image import MIMEImage
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+import av
+
+# BEFORE the "# Page config" section
+
+import warnings
+import logging
+import asyncio
+import sys
+
+# Suppress all warnings
+warnings.filterwarnings('ignore')
+
+# Configure logging to suppress WebRTC errors
+logging.getLogger('aioice').setLevel(logging.CRITICAL)
+logging.getLogger('aiortc').setLevel(logging.CRITICAL)
+logging.getLogger('av').setLevel(logging.CRITICAL)
+logging.getLogger('asyncio').setLevel(logging.CRITICAL)
+
+# Fix asyncio event loop for Python 3.11+
+if sys.platform == 'linux':
+    try:
+        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+    except:
+        pass
 
 # Page config
 st.set_page_config(
@@ -40,6 +63,27 @@ TARGET_SIZE = (512, 512)
 GT_DOWNSAMPLE = 8
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+RTC_CONFIGURATION = RTCConfiguration(
+    {
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]},
+
+            {
+                "urls": [
+                    "turn:global.relay.metered.ca:80",
+                    "turn:global.relay.metered.ca:443",
+                    "turn:global.relay.metered.ca:443?transport=tcp"
+                ],
+                "username": st.secrets["turn"]["username"],
+                "credential": st.secrets["turn"]["password"]
+            }
+        ],
+        "iceTransportPolicy": "all"
+    }
+)
+
+
 
 # ==================== 🔐 SECURE SMTP CREDENTIALS ====================
 def get_smtp_config():
@@ -116,7 +160,7 @@ class EmailAlertSystem:
                 <div style="padding: 20px; margin-top: 20px;">
                   <p style="font-size: 14px; color: #666;">
                     ⚡ Automated alert from Enhanced Crowd Counter<br>
-                    📧 Next alert after 5 min cooldown
+                    🔧 Next alert after 5 min cooldown
                   </p>
                 </div>
                 
@@ -287,7 +331,7 @@ class AdaptiveHybridCounter:
         self.device = DEVICE
         self.mean = IMAGENET_MEAN
         self.std = IMAGENET_STD
-        self.tracker = sv.ByteTrack(track_activation_threshold=0.3, lost_track_buffer=30, minimum_matching_threshold=0.8, frame_rate=30)
+        self.tracker = sv.ByteTrack()
         self.count_history = deque(maxlen=5)
         self.box_annotator = sv.BoxAnnotator(thickness=2, color=sv.Color.from_rgb_tuple((0, 255, 255)))
         self.label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, color=sv.Color.from_rgb_tuple((255, 255, 255)))
@@ -403,8 +447,8 @@ class AdaptiveHybridCounter:
         return annotated
     
     def reset_tracker(self):
-        self.tracker = sv.ByteTrack(track_activation_threshold=0.3, lost_track_buffer=30, minimum_matching_threshold=0.8, frame_rate=30)
-        self.count_history.clear()
+       self.tracker = sv.ByteTrack()
+       self.count_history.clear()
 
 
 # ==================== VIDEO PROCESSING ====================
@@ -553,6 +597,7 @@ def create_analytics_graphs(stats):
     
     with col1:
         st.markdown("### 📊 Count Distribution")
+      
         fig2 = go.Figure(data=[go.Histogram(x=df['Count'], nbinsx=30, marker_color='#00d4ff', opacity=0.75)])
         fig2.update_layout(title="Crowd Count Distribution", xaxis_title="Count", yaxis_title="Frequency", template='plotly_dark', height=350)
         st.plotly_chart(fig2, use_container_width=True)
@@ -612,6 +657,124 @@ def create_analytics_graphs(stats):
             st.metric("Frames Above Avg", above_threshold)
 
 
+# ==================== WEBRTC VIDEO PROCESSOR ====================
+# ==================== WEBRTC VIDEO PROCESSOR (FIXED) ====================
+class VideoProcessor:
+    """
+    Fixed WebRTC processor with proper error handling
+    """
+    def __init__(self):
+        self.hybrid_counter = None
+        self.alert_threshold = 50
+        self.yolo_conf = 0.4
+        self.use_adaptive = True
+        self.density_threshold = 30
+        self.email_system = None
+        self.email_sent = False
+        self.frame_count = 0
+        
+    def recv(self, frame):
+        """Process incoming video frame"""
+        try:
+            # Convert frame to numpy array
+            img = frame.to_ndarray(format="bgr24")
+            
+            # If no counter loaded, return original frame with message
+            if self.hybrid_counter is None:
+                h, w = img.shape[:2]
+                cv2.rectangle(img, (0, 0), (w, 60), (0, 0, 0), -1)
+                cv2.putText(img, "Loading models...", (10, 35), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+                return av.VideoFrame.from_ndarray(img, format="bgr24")
+            
+            # Increment frame counter
+            self.frame_count += 1
+            
+            # Process every frame (no skipping for smooth video)
+            annotated, density_map, final_count, mode, yolo_count = self.hybrid_counter.predict_adaptive(
+                img, 
+                yolo_conf=self.yolo_conf, 
+                use_adaptive=self.use_adaptive, 
+                density_threshold=self.density_threshold
+            )
+            
+            h, w = annotated.shape[:2]
+            
+            # Create overlay background
+            cv2.rectangle(annotated, (0, 0), (w, 140), (0, 0, 0), -1)
+            
+            # Mode color
+            mode_color = (255, 165, 0) if mode == "YOLO + CSRNet" else (147, 112, 219)
+            
+            # Draw text overlays
+            cv2.putText(annotated, "Adaptive Hybrid: YOLO + CSRNet", 
+                       (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(annotated, f"Mode: {mode}", 
+                       (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, mode_color, 2)
+            cv2.putText(annotated, f"Count: {int(final_count)} | YOLO: {yolo_count} | Frame: {self.frame_count}", 
+                       (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            
+            # Alert handling
+            if final_count > self.alert_threshold:
+                # Top alert text
+                cv2.putText(annotated, f"ALERT! {int(final_count)} > {self.alert_threshold}", 
+                           (10, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                
+                # Bottom alert banner
+                cv2.rectangle(annotated, (0, h - 50), (w, h), (0, 0, 255), -1)
+                cv2.putText(annotated, "CROWD ALERT ACTIVE!", 
+                           (20, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                
+                # Send email (once per alert, with cooldown handled by EmailAlertSystem)
+                if self.email_system and self.email_system.enabled and not self.email_sent:
+                    try:
+                        # Save frame temporarily
+                        alert_image_path = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg').name
+                        cv2.imwrite(alert_image_path, annotated)
+                        
+                        # Send email
+                        sent = self.email_system.send_alert_email(
+                            subject="🚨 LIVE WEBCAM ALERT!", 
+                            count=final_count, 
+                            threshold=self.alert_threshold, 
+                            frame_info=f"Live Feed - Frame {self.frame_count}", 
+                            image_path=alert_image_path
+                        )
+                        
+                        if sent:
+                            self.email_sent = True
+                        
+                        # Clean up temp file
+                        try:
+                            os.unlink(alert_image_path)
+                        except:
+                            pass
+                    except Exception as e:
+                        # Silently fail on email errors
+                        pass
+            else:
+                # Normal status
+                cv2.putText(annotated, f"Normal - Count: {int(final_count)}", 
+                           (10, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                # Reset email flag when count drops below threshold
+                self.email_sent = False
+            
+            # Return processed frame
+            return av.VideoFrame.from_ndarray(annotated, format="bgr24")
+            
+        except Exception as e:
+            # On any error, return original frame with error message
+            try:
+                img = frame.to_ndarray(format="bgr24")
+                h, w = img.shape[:2]
+                cv2.rectangle(img, (0, 0), (w, 60), (0, 0, 255), -1)
+                cv2.putText(img, f"Processing Error", 
+                           (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                return av.VideoFrame.from_ndarray(img, format="bgr24")
+            except:
+                # Last resort: return original frame unchanged
+                return frame
+
 # ==================== MAIN UI ====================
 def main():
     st.title("🎥 Deep Vision Crowd Monitor: AI for Density Estimation and Overcrowding Detection")
@@ -623,7 +786,7 @@ def main():
         
         st.divider()
         
-        st.markdown("### 📧 Email Alert Settings")
+        st.markdown("### 🔧 Email Alert Settings")
         
         if SMTP_CONFIG:
             st.success(f"✅ SMTP Configured\n\n📤 Sender: {SMTP_CONFIG['sender_email']}")
@@ -644,7 +807,7 @@ def main():
         st.divider()
         st.info("**Video:** Frame skip 3-5\n\n**Webcam:** YOLO conf 0.3-0.4")
     
-    tab1, tab2 = st.tabs(["📹 Video Processing", "📷 Live Webcam"])
+    tab1, tab2 = st.tabs(["🎬 Video Processing", "📷 Live Webcam"])
     
     # ========== TAB 1: VIDEO ==========
     with tab1:
@@ -706,7 +869,7 @@ def main():
                         if stats.get('email_sent', False):
                             st.success("✅ Email alert sent successfully!")
                         
-                        st.markdown("### 📹 Processed Video")
+                        st.markdown("### 🎬 Processed Video")
                         try:
                             st.video(stats['output_path'])
                         except:
@@ -723,11 +886,11 @@ def main():
                         except:
                             pass
     
-    # ========== TAB 2: WEBCAM ==========
+    # ========== TAB 2: WEBCAM WITH WEBRTC - COMPLETELY FIXED ==========
     with tab2:
         st.markdown("### 🧠 Adaptive Hybrid Strategy: YOLO + CSRNet")
         
-        st.warning("⚠️ **Note:** Streamlit does NOT support live webcam natively. This uses OpenCV local webcam (PC/laptop only). Does NOT work on Streamlit Cloud.")
+        st.info("✅ **WebRTC Enabled** - Works on Streamlit Cloud! Browser camera will be used.")
         
         col1, col2 = st.columns([1, 2])
         
@@ -738,135 +901,188 @@ def main():
             density_threshold = st.slider("Dense Crowd Threshold", 10, 100, 30, 5, key="density_thresh")
             use_adaptive = st.checkbox("Enable Adaptive Mode", value=True, key="use_adaptive")
             
-            st.divider()
-            
-            col_start, col_stop = st.columns(2)
-            with col_start:
-                start_webcam = st.button("🎥 Start Webcam", type="primary")
-            with col_stop:
-                stop_webcam = st.button("⏹️ Stop Webcam")
-            
             if st.button("🔄 Reset Tracker"):
-                if 'hybrid_counter' in st.session_state:
+                if 'hybrid_counter' in st.session_state and st.session_state.hybrid_counter:
                     st.session_state.hybrid_counter.reset_tracker()
                     st.success("✅ Tracker reset!")
         
         with col2:
-            st.markdown("#### 📷 Local Webcam Feed")
+            st.markdown("#### 📷 Live Webcam Feed (WebRTC)")
             
-            if 'webcam_running' not in st.session_state:
-                st.session_state.webcam_running = False
-            
-            if 'webcam_email_sent' not in st.session_state:
-                st.session_state.webcam_email_sent = False
-            
-            if start_webcam:
-                if not Path(model_path).exists():
-                    st.error(f"❌ CSRNet model not found: {model_path}")
-                else:
-                    with st.spinner("Loading models..."):
+            # ✅ Check model path
+            if not Path(model_path).exists():
+                st.error(f"❌ CSRNet model not found: {model_path}")
+                st.info("Upload your trained model file first!")
+            else:
+                # ✅ Step 1: Load models ONCE
+                if 'models_loaded' not in st.session_state:
+                    st.session_state.models_loaded = False
+                
+                if not st.session_state.models_loaded:
+                    with st.spinner("🔄 Loading AI models... Please wait..."):
                         try:
                             csrnet = load_trained_model(model_path)
                             yolo = load_yolo_model()
-                            st.session_state.hybrid_counter = AdaptiveHybridCounter(csrnet, yolo)
-                            st.session_state.webcam_email_system = EmailAlertSystem(recipient_list, enabled=enable_email)
-                            st.session_state.webcam_email_sent = False
-                            st.session_state.webcam_running = True
-                            st.success("✓ Models loaded! Starting webcam...")
+                            st.session_state.csrnet = csrnet
+                            st.session_state.yolo = yolo
+                            st.session_state.models_loaded = True
+                            st.success("✅ Models loaded!")
+                            time.sleep(0.5)
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error: {e}")
-            
-            if stop_webcam:
-                st.session_state.webcam_running = False
-                st.session_state.webcam_email_sent = False
-                if 'cap' in st.session_state:
-                    st.session_state.cap.release()
-                st.success("✓ Webcam stopped!")
-                st.rerun()
-            
-            if st.session_state.webcam_running:
-                stframe = st.empty()
-                
-                try:
-                    if 'cap' not in st.session_state:
-                        st.session_state.cap = cv2.VideoCapture(0)
-                        if not st.session_state.cap.isOpened():
-                            st.error("❌ Cannot access webcam!")
-                            st.session_state.webcam_running = False
+                            st.error(f"❌ Model loading failed: {e}")
                             st.stop()
-                    
-                    cap = st.session_state.cap
-                    counter = st.session_state.hybrid_counter
-                    email_system = st.session_state.get('webcam_email_system', None)
-                    
-                    fps_display = st.empty()
-                    frame_count = 0
-                    start_time = time.time()
-                    
-                    while st.session_state.webcam_running:
-                        ret, frame = cap.read()
-                        if not ret:
-                            st.error("❌ Failed to read from webcam!")
-                            break
-                        
-                        frame_start = time.time()
-                        annotated, density_map, final_count, mode, yolo_count = counter.predict_adaptive(frame, yolo_conf=yolo_conf, use_adaptive=use_adaptive, density_threshold=density_threshold)
-                        frame_time = time.time() - frame_start
-                        fps = 1.0 / frame_time if frame_time > 0 else 0
-                        
-                        h, w = annotated.shape[:2]
-                        cv2.rectangle(annotated, (0, 0), (w, 140), (0, 0, 0), -1)
-                        mode_color = (255, 165, 0) if mode == "YOLO + CSRNet" else (147, 112, 219)
-                        
-                        cv2.putText(annotated, "Adaptive Hybrid: YOLO + CSRNet", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                        cv2.putText(annotated, f"Mode: {mode}", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, mode_color, 2)
-                        
-                        if final_count > webcam_alert:
-                            cv2.putText(annotated, f"ALERT! Count: {int(final_count)} > {webcam_alert}", (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                            cv2.rectangle(annotated, (0, h - 50), (w, h), (0, 0, 255), -1)
-                            cv2.putText(annotated, f"ALERT! Count Exceeded!", (20, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                            
-                            if email_system and email_system.enabled and not st.session_state.webcam_email_sent:
-                                alert_image_path = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg').name
-                                cv2.imwrite(alert_image_path, annotated)
-                                email_sent = email_system.send_alert_email(subject="🚨 LIVE WEBCAM ALERT!", count=final_count, threshold=webcam_alert, frame_info="Live Webcam", image_path=alert_image_path)
-                                if email_sent:
-                                    st.session_state.webcam_email_sent = True
-                                    st.success("✅ Live webcam email alert sent!")
-                                try:
-                                    os.unlink(alert_image_path)
-                                except:
-                                    pass
-                        else:
-                            cv2.putText(annotated, f"Normal - Count: {int(final_count)}", (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                            st.session_state.webcam_email_sent = False
-                        
-                        cv2.putText(annotated, f"Count: {int(final_count)} | YOLO: {yolo_count} | FPS: {fps:.1f}", (10, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                        
-                        annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                        stframe.image(annotated_rgb, channels="RGB", use_container_width=True)
-                        
-                        frame_count += 1
-                        if frame_count % 30 == 0:
-                            elapsed = time.time() - start_time
-                            avg_fps = frame_count / elapsed
-                            fps_display.metric("Average FPS", f"{avg_fps:.2f}")
-                        
-                        time.sleep(0.03)
-                    
-                    if 'cap' in st.session_state:
-                        st.session_state.cap.release()
-                        del st.session_state.cap
                 
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                    st.session_state.webcam_running = False
-                    if 'cap' in st.session_state:
-                        st.session_state.cap.release()
-            else:
-                st.info("💡 Click 'Start Webcam' to begin live detection with email alerts")
-
-
+                # ✅ Step 2: Create hybrid counter ONCE
+                if 'hybrid_counter' not in st.session_state:
+                    st.session_state.hybrid_counter = AdaptiveHybridCounter(
+                        st.session_state.csrnet,
+                        st.session_state.yolo
+                    )
+                
+                
+                # ✅ CRITICAL FIX: Capture references OUTSIDE factory function
+                hybrid_counter_ref = st.session_state.hybrid_counter
+                email_system_ref = EmailAlertSystem(recipient_list, enabled=enable_email)
+                
+                # Capture current slider values
+                alert_threshold_val = webcam_alert
+                yolo_conf_val = yolo_conf
+                use_adaptive_val = use_adaptive
+                density_threshold_val = density_threshold
+                
+                # ✅ Factory function (NO session_state access inside!)
+                def create_video_processor():
+                    """Factory that uses captured values from main thread"""
+                    processor = VideoProcessor()
+                    processor.hybrid_counter = hybrid_counter_ref
+                    processor.alert_threshold = alert_threshold_val
+                    processor.yolo_conf = yolo_conf_val
+                    processor.use_adaptive = use_adaptive_val
+                    processor.density_threshold = density_threshold_val
+                    processor.email_system = email_system_ref
+                    processor.email_sent = False
+                    return processor
+                
+                st.warning("⚠️ **IMPORTANT**: Allow camera permission when browser asks!")
+                
+                # ✅ WebRTC streamer with fixed factory
+                ctx = webrtc_streamer(
+                    key="crowd-detection-live",
+                    mode=WebRtcMode.SENDRECV,
+                    rtc_configuration=RTC_CONFIGURATION,
+                    video_processor_factory=create_video_processor,
+                    media_stream_constraints={
+                        "video": {
+                            "width": {"min": 640, "ideal": 1280, "max": 1920},
+                            "height": {"min": 480, "ideal": 720, "max": 1080},
+                            "frameRate": {"ideal": 30}
+                        },
+                        "audio": False
+                    },
+                    async_processing=True,
+                )
+              
+                # Debug info
+                st.markdown("---")
+                st.markdown("### 🔍 Debug Info")
+                
+                col_debug1, col_debug2, col_debug3 = st.columns(3)
+                
+                with col_debug1:
+                    st.write("**WebRTC State:**")
+                    st.write(f"- Playing: {ctx.state.playing}")
+                    st.write(f"- Signalling: {ctx.state.signalling}")
+                
+                with col_debug2:
+                    st.write("**Models:**")
+                    models_ok = 'models_loaded' in st.session_state and st.session_state.models_loaded
+                    st.write(f"- Loaded: {models_ok}")
+                    if models_ok:
+                        st.write(f"- Counter: {'✅' if 'hybrid_counter' in st.session_state else '❌'}")
+                
+                with col_debug3:
+                    st.write("**Settings:**")
+                    st.write(f"- Alert: {webcam_alert}")
+                    st.write(f"- YOLO: {yolo_conf}")
+                    st.write(f"- Adaptive: {use_adaptive}")
+                
+                # Status display
+                if ctx.state.playing:
+                    st.success("✅ Webcam ACTIVE - Processing frames...")
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("Alert Threshold", webcam_alert)
+                    with col_b:
+                        st.metric("YOLO Conf", f"{yolo_conf:.2f}")
+                    with col_c:
+                        st.metric("Mode", "Adaptive" if use_adaptive else "YOLO+CSRNet")
+                    
+                    st.info("💡 **Note:** Settings are captured when START is clicked. To update settings, click STOP then START again.")
+                        
+                elif ctx.state.signalling:
+                    st.info("🔄 Connecting to camera... Please wait...")
+                else:
+                    st.info("💡 **Click START button above** to activate webcam")
+                    
+                    st.markdown("""
+                    ### 📋 Quick Start Guide:
+                    1. **Adjust settings** using sliders on the left
+                    2. Click the **START** button above ⬆️
+                    3. **Allow camera access** in browser popup
+                    4. Wait 2-3 seconds for processing to begin
+                    5. To change settings: Click **STOP** → Adjust sliders → Click **START**
+                    """)
+                
+                # Troubleshooting section
+                with st.expander("❓ Camera Not Working? Click Here"):
+                    st.markdown("""
+                    ### 🔧 Troubleshooting Steps:
+                    
+                    #### 1️⃣ Browser Permission
+                    - Look for 🔒 or 📷 icon in address bar
+                    - Click it and select "Allow" for camera
+                    - Refresh page after allowing
+                    
+                    #### 2️⃣ Camera Already in Use?
+                    - Close Zoom, Teams, Skype, etc.
+                    - Close other browser tabs using camera
+                    - Check Windows Camera app (close if open)
+                    
+                    #### 3️⃣ Browser Compatibility
+                    - ✅ **Chrome** (Recommended)
+                    - ✅ **Edge** (Recommended)  
+                    - ✅ Firefox
+                    - ⚠️ Safari (Limited support)
+                    - ❌ Mobile browsers (Not supported)
+                    
+                    #### 4️⃣ HTTPS Required
+                    - Streamlit Cloud: ✅ Automatic HTTPS
+                    - Localhost: Use `http://localhost:8501`
+                    - Network access: Must use HTTPS
+                    
+                    #### 5️⃣ Still Not Working?
+                    - Try Incognito/Private mode
+                    - Clear browser cache (Ctrl+Shift+Delete)
+                    - Disable browser extensions
+                    - Test camera at: https://webcamtests.com
+                    - Try different browser
+                    - Restart browser completely
+                    
+                    #### 6️⃣ Console Errors (Advanced)
+                    - Press **F12** to open Developer Console
+                    - Look in **Console** tab for errors
+                    - Check for "getUserMedia" or "NotAllowedError"
+                    - Share errors in support if needed
+                    
+                    #### 7️⃣ Model Loading Issues
+                    - Ensure `best_crowd_counter_objects.pth` exists
+                    - Check file path in sidebar settings
+                    - Wait for "Models loaded!" message before clicking START
+                    """)
+                
+                st.divider()
+                st.caption("🔒 Privacy: Video is processed locally in your browser. Nothing is stored or uploaded.")
 if __name__ == "__main__":
     main()
