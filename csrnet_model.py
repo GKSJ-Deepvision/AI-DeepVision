@@ -7,19 +7,27 @@ class CSRNet(nn.Module):
     def __init__(self):
         super(CSRNet, self).__init__()
 
-        # VGG16 frontend (no BatchNorm)
+        # ================= FRONTEND =================
+        # VGG16 frontend (first 23 layers, no BatchNorm)
         vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
         self.frontend = nn.Sequential(*list(vgg.features.children())[:23])
 
-        # 🔥 Backend EXACTLY as trained
+        # ================= BACKEND =================
+        # 🔥 MUST match the trained model EXACTLY
         self.backend = nn.Sequential(
-            nn.Conv2d(512, 256, 3, padding=2, dilation=2),
+            nn.Conv2d(512, 512, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
 
-            nn.Conv2d(256, 128, 3, padding=2, dilation=2),
+            nn.Conv2d(512, 512, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
 
-            nn.Conv2d(128, 64, 3, padding=2, dilation=2),
+            nn.Conv2d(512, 256, kernel_size=3, padding=2, dilation=2),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(256, 128, kernel_size=3, padding=2, dilation=2),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(128, 64, kernel_size=3, padding=2, dilation=2),
             nn.ReLU(inplace=True),
 
             nn.Conv2d(64, 1, kernel_size=1)
