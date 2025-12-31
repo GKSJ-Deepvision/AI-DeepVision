@@ -20,7 +20,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ================= CONFIG =================
 MODEL_PATH = "csrnet_epoch105.pth"
 CROWD_THRESHOLD = 70
-ALERT_EMAIL = "thenovavoyage00@gmail.com"   # 🔔 CHANGE THIS
+ALERT_EMAIL = "receiver@gmail.com"   # 🔔 CHANGE THIS
 SNAPSHOT_DIR = "snapshots"
 
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)

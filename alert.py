@@ -3,8 +3,8 @@ from email.message import EmailMessage
 from datetime import datetime
 import os
 
-EMAIL = "thenovavoyage00@gmail.com"          # 🔴 change this
-APP_PASSWORD = "ibhi txmx agqc mwcw"     # 🔴 Gmail App Password
+EMAIL = "receiver@gmail.com"          # 🔴 change this
+APP_PASSWORD = "receiverpassword"     # 🔴 Gmail App Password
 PORT = 465
 
 def send_email(to_email, count, alert_text, fps, snapshot_path=None):
