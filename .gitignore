@@ -1,0 +1,26 @@
+# Ignore datasets
+Dataset/
+preprocessed/
+preprocessed_B/
+path/
+
+# PyTorch model weights
+*.pth
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual environment
+venv/
+
+# Logs & system files
+*.log
+Thumbs.db
+.DS_Store
+*.mp4
+snapshots/
+
