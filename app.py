@@ -6,7 +6,7 @@ import time
 import os
 
 from csrnet_model import CSRNet
-from alert import send_email   # 🔔 EMAIL ALERT MODULE
+from alert import send_email   # 🔔 EMAIL ALERT MODULE (USES SECRETS)
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -20,9 +20,11 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ================= CONFIG =================
 MODEL_PATH = "csrnet_epoch105.pth"
 CROWD_THRESHOLD = 70
-ALERT_EMAIL = "receiver@gmail.com"   # 🔔 CHANGE THIS
-SNAPSHOT_DIR = "snapshots"
 
+# 👉 Receiver email (OK to keep here)
+ALERT_EMAIL = "receiver@gmail.com"
+
+SNAPSHOT_DIR = "snapshots"
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 # ================= SESSION STATE =================
@@ -102,7 +104,7 @@ def process_frame(frame):
     return overlay, count
 
 # ================= UI =================
-st.title("🧠 DeepVision Crowd Monitor ")
+st.title("🧠 DeepVision Crowd Monitor")
 
 mode = st.radio("Select Input Mode", ["Webcam", "Upload Video"])
 
@@ -110,12 +112,12 @@ frame_box = st.image([])
 count_box = st.empty()
 alert_box = st.empty()
 
-# ================= WEBCAM MODE =================
+# ================= WEBCAM MODE (LOCAL USE) =================
 if mode == "Webcam":
     start = st.checkbox("▶ Start Webcam")
 
     if start:
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(0)
         prev_time = time.time()
 
         while cap.isOpened() and start:
@@ -154,7 +156,7 @@ if mode == "Webcam":
 
         cap.release()
 
-# ================= VIDEO MODE =================
+# ================= VIDEO MODE (DEPLOYMENT SAFE) =================
 if mode == "Upload Video":
     video = st.file_uploader("Upload a video", type=["mp4", "avi"])
 
@@ -165,7 +167,6 @@ if mode == "Upload Video":
         cap = cv2.VideoCapture("temp.mp4")
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        start_time = time.time()
         frame_id = 0
         prev_time = time.time()
 
@@ -183,7 +184,6 @@ if mode == "Upload Video":
 
             frame_box.image(overlay, channels="BGR")
 
-            elapsed = time.time() - start_time
             progress = (frame_id / total) * 100 if total > 0 else 0
 
             count_box.markdown(
