@@ -4,36 +4,26 @@ import torch.nn as nn
 import cv2
 import numpy as np
 import tempfile
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import yagmail
 from torchvision import transforms
 
 # =========================
-# CONFIGURATION
+# CONFIG
 # =========================
 SWITCH_THRESHOLD = 75
 ALERT_THRESHOLD = 120
 
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SENDER_EMAIL = "your_email@gmail.com"
-SENDER_PASSWORD = "your_app_password"
+MODEL_A_PATH = "csrnet_final.pth"
+MODEL_B_PATH = "csrnet_finalB.pth"
 
-ALERT_EMAILS = [
-    "admin1@example.com",
-    "admin2@example.com"
-]
-
-MODEL_A_PATH = "models/csrnet_partA.pth"
-MODEL_B_PATH = "models/csrnet_partB.pth"
+ALERT_EMAIL = "ishita22.d@gmail.com"   
 
 # =========================
 # CSRNet MODEL
 # =========================
 class CSRNet(nn.Module):
     def __init__(self):
-        super(CSRNet, self).__init__()
+        super().__init__()
 
         self.frontend = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1), nn.ReLU(inplace=True),
@@ -51,7 +41,7 @@ class CSRNet(nn.Module):
 
             nn.Conv2d(256, 512, 3, padding=1), nn.ReLU(inplace=True),
             nn.Conv2d(512, 512, 3, padding=1), nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, 3, padding=1), nn.ReLU(inplace=True)
+            nn.Conv2d(512, 512, 3, padding=1), nn.ReLU(inplace=True),
         )
 
         self.backend = nn.Sequential(
@@ -60,19 +50,16 @@ class CSRNet(nn.Module):
             nn.Conv2d(512, 512, 3, dilation=2, padding=2), nn.ReLU(inplace=True),
             nn.Conv2d(512, 256, 3, dilation=2, padding=2), nn.ReLU(inplace=True),
             nn.Conv2d(256, 128, 3, dilation=2, padding=2), nn.ReLU(inplace=True),
-            nn.Conv2d(128, 64, 3, dilation=2, padding=2), nn.ReLU(inplace=True)
+            nn.Conv2d(128, 64, 3, dilation=2, padding=2), nn.ReLU(inplace=True),
         )
 
         self.output = nn.Conv2d(64, 1, 1)
 
     def forward(self, x):
-        x = self.frontend(x)
-        x = self.backend(x)
-        x = self.output(x)
-        return x
+        return self.output(self.backend(self.frontend(x)))
 
 # =========================
-# LOAD MODELS ONCE
+# LOAD MODELS
 # =========================
 @st.cache_resource
 def load_models():
@@ -90,12 +77,14 @@ def load_models():
     return model_A, model_B, device
 
 # =========================
-# PREPROCESSING
+# PREPROCESS
 # =========================
 transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
 ])
 
 def preprocess(frame, device):
@@ -104,18 +93,15 @@ def preprocess(frame, device):
     return tensor.to(device)
 
 # =========================
-# SWITCHING LOGIC
+# INFERENCE SWITCH
 # =========================
-def switch_inference(frame_tensor, model_A, model_B):
+def infer(frame_tensor, model_A, model_B):
     with torch.no_grad():
         dA = model_A(frame_tensor)
+        countA = dA.sum().item()
+        if countA > SWITCH_THRESHOLD:
+            return dA, countA, "CSRNet Part A"
         dB = model_B(frame_tensor)
-
-    count_A = dA.sum().item()
-
-    if count_A > SWITCH_THRESHOLD:
-        return dA, count_A, "CSRNet Part A"
-    else:
         return dB, dB.sum().item(), "CSRNet Part B"
 
 # =========================
@@ -124,86 +110,97 @@ def switch_inference(frame_tensor, model_A, model_B):
 def generate_heatmap(density, frame):
     density = density.squeeze().cpu().numpy()
     density = cv2.resize(density, (frame.shape[1], frame.shape[0]))
-    density = density / (density.max() + 1e-5)
-    density = (density * 255).astype(np.uint8)
-    heatmap = cv2.applyColorMap(density, cv2.COLORMAP_JET)
-    return cv2.addWeighted(frame, 0.6, heatmap, 0.4, 0)
+    density = density / (density.max() + 1e-6)
+    density = np.uint8(255 * density)
+    heat = cv2.applyColorMap(density, cv2.COLORMAP_JET)
+    return cv2.addWeighted(frame, 0.6, heat, 0.4, 0)
 
 # =========================
-# SMTP ALERT
+# EMAIL ALERT (YAGMAIL)
 # =========================
+import yagmail
+
 def send_alert(count):
-    msg = MIMEMultipart()
-    msg["From"] = SENDER_EMAIL
-    msg["Subject"] = "Crowd Alert"
-    msg.attach(MIMEText(f"Crowd count exceeded: {int(count)}", "plain"))
+    sender_email = "your_email@gmail.com"
+    app_password = "YOUR_16_CHAR_APP_PASSWORD"
+    receiver_email = "receiver_email@gmail.com"
 
-    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-    server.starttls()
-    server.login(SENDER_EMAIL, SENDER_PASSWORD)
+    yag = yagmail.SMTP(
+        user=sender_email,
+        password=app_password
+    )
 
-    for email in ALERT_EMAILS:
-        server.sendmail(SENDER_EMAIL, email, msg.as_string())
+    subject = "Crowd Alert"
+    contents = f"Alert! Crowd count exceeded threshold.\nCurrent count: {count}"
 
-    server.quit()
+    yag.send(to=receiver_email, subject=subject, contents=contents)
 
 # =========================
 # STREAMLIT UI
 # =========================
-st.set_page_config(layout="wide")
-st.title("Real-Time Crowd Monitoring System")
+st.set_page_config(page_title="Crowd Monitoring", layout="wide")
+st.title("CSRNet Crowd Monitoring System (Localhost)")
 
 model_A, model_B, device = load_models()
 
 tab1, tab2 = st.tabs(["📷 Webcam Monitoring", "🎥 Video Upload Monitoring"])
 
 # =========================
-# TAB 1 – WEBCAM
+# TAB 1: WEBCAM
 # =========================
 with tab1:
-    st.header("Live Webcam Crowd Detection")
-    start = st.button("Start Webcam")
+    if "run_cam" not in st.session_state:
+        st.session_state.run_cam = False
+        st.session_state.alert_sent = False
 
-    if start:
+    col1, col2 = st.columns(2)
+    if col1.button("Start Webcam"):
+        st.session_state.run_cam = True
+    if col2.button("Stop Webcam"):
+        st.session_state.run_cam = False
+        st.session_state.alert_sent = False
+
+    frame_box = st.empty()
+    metric_box = st.empty()
+    model_box = st.empty()
+
+    if st.session_state.run_cam:
         cap = cv2.VideoCapture(0)
-        alert_sent = False
-        frame_window = st.image([])
 
-        while cap.isOpened():
+        while st.session_state.run_cam:
             ret, frame = cap.read()
             if not ret:
                 break
 
             tensor = preprocess(frame, device)
-            density, count, model_used = switch_inference(tensor, model_A, model_B)
+            density, count, model_used = infer(tensor, model_A, model_B)
             output = generate_heatmap(density, frame)
 
-            st.metric("Crowd Count", int(count))
-            st.write(f"Model Used: {model_used}")
+            metric_box.metric("Crowd Count", int(count))
+            model_box.write(f"Model Used: {model_used}")
 
-            if count > ALERT_THRESHOLD and not alert_sent:
+            if count > ALERT_THRESHOLD and not st.session_state.alert_sent:
                 send_alert(count)
-                st.error("ALERT SENT: Crowd Limit Exceeded")
-                alert_sent = True
+                st.session_state.alert_sent = True
+                st.error("ALERT EMAIL SENT")
 
-            frame_window.image(output, channels="BGR")
+            frame_box.image(output, channels="BGR")
 
         cap.release()
 
 # =========================
-# TAB 2 – VIDEO UPLOAD
+# TAB 2: VIDEO UPLOAD
 # =========================
 with tab2:
-    st.header("Video Upload Crowd Detection")
-    uploaded = st.file_uploader("Upload video", type=["mp4"])
+    uploaded = st.file_uploader("Upload Video", type=["mp4"])
 
     if uploaded:
         tfile = tempfile.NamedTemporaryFile(delete=False)
         tfile.write(uploaded.read())
-        cap = cv2.VideoCapture(tfile.name)
 
-        alert_sent = False
-        frame_window = st.image([])
+        cap = cv2.VideoCapture(tfile.name)
+        frame_box = st.empty()
+        st.session_state.alert_sent = False
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -211,17 +208,17 @@ with tab2:
                 break
 
             tensor = preprocess(frame, device)
-            density, count, model_used = switch_inference(tensor, model_A, model_B)
+            density, count, model_used = infer(tensor, model_A, model_B)
             output = generate_heatmap(density, frame)
 
             st.metric("Crowd Count", int(count))
             st.write(f"Model Used: {model_used}")
 
-            if count > ALERT_THRESHOLD and not alert_sent:
+            if count > ALERT_THRESHOLD and not st.session_state.alert_sent:
                 send_alert(count)
-                st.error("ALERT SENT: Crowd Limit Exceeded")
-                alert_sent = True
+                st.session_state.alert_sent = True
+                st.error("ALERT EMAIL SENT")
 
-            frame_window.image(output, channels="BGR")
+            frame_box.image(output, channels="BGR")
 
         cap.release()
