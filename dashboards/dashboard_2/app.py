@@ -20,7 +20,7 @@ from utils import preprocess_frame, density_to_heatmap
 MODEL_PATH = "csrnet_finetuned_2.pth"
 
 # YOUR GOOGLE DRIVE FILE ID
-GDRIVE_FILE_ID = "19WxyQffyzOiQ3ABp-Ogd5lQ4hxINBz0v"
+GDRIVE_FILE_ID = "1xvxwHtRkc_mIak9oin3QKwdChtkoOd2e"
 
 
 # =========================
@@ -77,7 +77,7 @@ st.title("Crowd Monitoring Dashboard 2")
 
 model, device = load_model()
 
-ALERT_THRESHOLD = st.slider("Alert Threshold", 5, 50, 10)
+ALERT_THRESHOLD = st.slider("Alert Threshold", 5, 200, 10)
 
 uploaded_file = st.file_uploader("Upload Crowd Video", type=["mp4", "avi"])
 
@@ -156,3 +156,5 @@ if uploaded_file is not None:
         time.sleep(0.03)
 
     cap.release()
+
+
