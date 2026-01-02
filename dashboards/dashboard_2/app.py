@@ -20,7 +20,7 @@ from utils import preprocess_frame, density_to_heatmap
 MODEL_PATH = "csrnet_finetuned_2.pth"
 
 # YOUR GOOGLE DRIVE FILE ID
-GDRIVE_FILE_ID = "19WxyQffyzOiQ3ABp-Ogd5lQ4hxINBz0v"
+GDRIVE_FILE_ID = "1xvxwHtRkc_mIak9oin3QKwdChtkoOd2e"
 
 
 # =========================
@@ -156,3 +156,4 @@ if uploaded_file is not None:
         time.sleep(0.03)
 
     cap.release()
+
