@@ -17,13 +17,13 @@ st.set_page_config(
 # ================= DEVICE =================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ================= PATH FIX (VERY IMPORTANT) =================
+# ================= PATH FIX (CRITICAL FOR STREAMLIT CLOUD) =================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "csrnet_epoch105.pth")
 
 # ================= CONFIG =================
 CROWD_THRESHOLD = 70
-ALERT_EMAIL = "receiver@gmail.com"   # receiver email
+ALERT_EMAIL = "receiver@gmail.com"
 
 SNAPSHOT_DIR = os.path.join(BASE_DIR, "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
@@ -33,10 +33,13 @@ if "alert_sent" not in st.session_state:
     st.session_state.alert_sent = False
 
 # ================= LOAD MODEL =================
-@st.cache_resource
+@st.cache_resource(show_spinner="🔄 Loading CSRNet model...")
 def load_model():
-    model = CSRNet().to(DEVICE)
+    if not os.path.exists(MODEL_PATH):
+        st.error(f"❌ Model file not found at:\n{MODEL_PATH}")
+        st.stop()
 
+    model = CSRNet().to(DEVICE)
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
 
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
@@ -115,6 +118,7 @@ alert_box = st.empty()
 
 # ================= WEBCAM MODE (LOCAL ONLY) =================
 if mode == "Webcam":
+    st.warning("⚠ Webcam works only on local system (not Streamlit Cloud)")
     start = st.checkbox("▶ Start Webcam")
 
     if start:
@@ -159,7 +163,7 @@ if mode == "Webcam":
 
         cap.release()
 
-# ================= VIDEO MODE (DEPLOYMENT SAFE) =================
+# ================= VIDEO MODE (STREAMLIT SAFE) =================
 if mode == "Upload Video":
     video = st.file_uploader("Upload a video", type=["mp4", "avi"])
 
