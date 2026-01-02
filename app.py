@@ -4,9 +4,10 @@ import numpy as np
 import streamlit as st
 import time
 import os
+import urllib.request
 
 from csrnet_model import CSRNet
-from alert import send_email   # 🔔 EMAIL ALERT MODULE
+from alert import send_email
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -17,9 +18,12 @@ st.set_page_config(
 # ================= DEVICE =================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ================= PATH FIX (CRITICAL FOR STREAMLIT CLOUD) =================
+# ================= PATHS =================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "csrnet_epoch105.pth")
+
+# 🔽 PUBLIC RAW FILE URL (GitHub)
+MODEL_URL = "https://raw.githubusercontent.com/GKSJ-Deepvision/AI-DeepVision/main/csrnet_epoch105.pth"
 
 # ================= CONFIG =================
 CROWD_THRESHOLD = 70
@@ -28,16 +32,21 @@ ALERT_EMAIL = "receiver@gmail.com"
 SNAPSHOT_DIR = os.path.join(BASE_DIR, "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
+# ================= DOWNLOAD MODEL =================
+def download_model():
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner("⬇️ Downloading CSRNet model..."):
+            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        st.success("✅ Model downloaded successfully")
+
 # ================= SESSION STATE =================
 if "alert_sent" not in st.session_state:
     st.session_state.alert_sent = False
 
 # ================= LOAD MODEL =================
-@st.cache_resource(show_spinner="🔄 Loading CSRNet model...")
+@st.cache_resource
 def load_model():
-    if not os.path.exists(MODEL_PATH):
-        st.error(f"❌ Model file not found at:\n{MODEL_PATH}")
-        st.stop()
+    download_model()
 
     model = CSRNet().to(DEVICE)
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
@@ -65,8 +74,8 @@ def preprocess(frame):
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     frame = frame.astype(np.float32) / 255.0
 
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    mean = np.array([0.485, 0.456, 0.406])
+    std  = np.array([0.229, 0.224, 0.225])
     frame = (frame - mean) / std
 
     tensor = torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0)
@@ -82,17 +91,12 @@ def process_frame(frame):
 
     density_map = density.squeeze().cpu().numpy()
     density_map[density_map < 0] = 0
-
     count = int(density_map.sum())
 
     density_vis = cv2.resize(density_map, (w, h))
     density_norm = density_vis / density_vis.max() if density_vis.max() > 0 else density_vis
 
-    heatmap = cv2.applyColorMap(
-        (density_norm * 255).astype(np.uint8),
-        cv2.COLORMAP_JET
-    )
-
+    heatmap = cv2.applyColorMap((density_norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
     overlay = cv2.addWeighted(frame, 0.75, heatmap, 0.25, 0)
 
     cv2.rectangle(overlay, (0, 0), (w, 55), (0, 0, 0), -1)
@@ -101,7 +105,6 @@ def process_frame(frame):
 
     status = "CROWD ALERT" if count >= CROWD_THRESHOLD else "CROWD NORMAL"
     color = (0, 0, 255) if count >= CROWD_THRESHOLD else (0, 255, 0)
-
     cv2.putText(overlay, status, (260, 38),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, color, 3)
 
@@ -109,61 +112,12 @@ def process_frame(frame):
 
 # ================= UI =================
 st.title("🧠 DeepVision Crowd Monitor")
-
-mode = st.radio("Select Input Mode", ["Webcam", "Upload Video"])
+mode = st.radio("Select Input Mode", ["Upload Video"])
 
 frame_box = st.image([])
 count_box = st.empty()
 alert_box = st.empty()
 
-# ================= WEBCAM MODE (LOCAL ONLY) =================
-if mode == "Webcam":
-    st.warning("⚠ Webcam works only on local system (not Streamlit Cloud)")
-    start = st.checkbox("▶ Start Webcam")
-
-    if start:
-        cap = cv2.VideoCapture(0)
-        prev_time = time.time()
-
-        while cap.isOpened() and start:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            overlay, count = process_frame(frame)
-
-            now = time.time()
-            fps = 1 / max(1e-6, now - prev_time)
-            prev_time = now
-
-            frame_box.image(overlay, channels="BGR")
-            count_box.metric("👥 Crowd Count", count)
-
-            if count >= CROWD_THRESHOLD:
-                alert_box.error("🚨 OVERCROWDING DETECTED")
-
-                if not st.session_state.alert_sent:
-                    snapshot_path = os.path.join(
-                        SNAPSHOT_DIR, f"alert_{int(time.time())}.jpg"
-                    )
-                    cv2.imwrite(snapshot_path, overlay)
-
-                    send_email(
-                        to_email=ALERT_EMAIL,
-                        count=count,
-                        alert_text="Overcrowding detected",
-                        fps=fps,
-                        snapshot_path=snapshot_path
-                    )
-
-                    st.session_state.alert_sent = True
-            else:
-                alert_box.success("✅ Crowd Level Normal")
-                st.session_state.alert_sent = False
-
-        cap.release()
-
-# ================= VIDEO MODE (STREAMLIT SAFE) =================
 if mode == "Upload Video":
     video = st.file_uploader("Upload a video", type=["mp4", "avi"])
 
@@ -173,57 +127,15 @@ if mode == "Upload Video":
             f.write(video.read())
 
         cap = cv2.VideoCapture(temp_video)
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        frame_id = 0
-        prev_time = time.time()
 
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            frame_id += 1
             overlay, count = process_frame(frame)
-
-            now = time.time()
-            fps = 1 / max(1e-6, now - prev_time)
-            prev_time = now
-
             frame_box.image(overlay, channels="BGR")
-
-            progress = (frame_id / total) * 100 if total > 0 else 0
-
-            count_box.markdown(
-                f"""
-🎬 **Frame:** {frame_id}/{total}  
-📊 **Progress:** {progress:.1f}%  
-👥 **Count:** {count}  
-⚡ **FPS:** {fps:.1f}
-"""
-            )
-
-            if count >= CROWD_THRESHOLD:
-                alert_box.error("🚨 OVERCROWDING DETECTED")
-
-                if not st.session_state.alert_sent:
-                    snapshot_path = os.path.join(
-                        SNAPSHOT_DIR, f"alert_{int(time.time())}.jpg"
-                    )
-                    cv2.imwrite(snapshot_path, overlay)
-
-                    send_email(
-                        to_email=ALERT_EMAIL,
-                        count=count,
-                        alert_text="Overcrowding detected",
-                        fps=fps,
-                        snapshot_path=snapshot_path
-                    )
-
-                    st.session_state.alert_sent = True
-            else:
-                alert_box.success("✅ Crowd Level Normal")
-                st.session_state.alert_sent = False
+            count_box.metric("👥 Crowd Count", count)
 
         cap.release()
         st.success("🎉 Video processed successfully!")
