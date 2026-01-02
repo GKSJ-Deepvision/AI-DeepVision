@@ -7,9 +7,45 @@ import time
 import smtplib
 from email.message import EmailMessage
 from datetime import datetime
-from csrnet_model import CSRNet 
-from utils import preprocess_frame, density_to_heatmap 
+import os
+import gdown
 
+from csrnet_model import CSRNet
+from utils import preprocess_frame, density_to_heatmap
+
+
+# =========================
+# MODEL DOWNLOAD SETTINGS
+# =========================
+MODEL_PATH = "csrnet_finetuned.pth"
+
+# YOUR GOOGLE DRIVE FILE ID
+GDRIVE_FILE_ID = "19WxyQffyzOiQ3ABp-Ogd5lQ4hxINBz0v"
+
+
+# =========================
+# LOAD MODEL (WITH DOWNLOAD)
+# =========================
+@st.cache_resource
+def load_model():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if not os.path.exists(MODEL_PATH):
+        st.info("Model file not found. Downloading from Google Drive...")
+        url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
+        gdown.download(url, MODEL_PATH, quiet=False)
+
+    model = CSRNet()
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.to(device)
+    model.eval()
+
+    return model, device
+
+
+# =========================
+# EMAIL ALERT FUNCTION
+# =========================
 def send_email_alert(count):
     EMAIL_SENDER = "s91596532@gmail.com"
     EMAIL_PASSWORD = "rgvj gfww eusn txtg"   
@@ -33,18 +69,13 @@ CSRNet Crowd Monitoring System
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.send_message(msg)
 
-@st.cache_resource
-def load_model():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = CSRNet()
-    model.load_state_dict(torch.load("csrnet_finetuned.pth", map_location=device))
-    model.to(device)
-    model.eval()
-    return model, device
+
+# =========================
+# STREAMLIT UI
+# =========================
+st.title("Crowd Monitoring Dashboard")
 
 model, device = load_model()
-
-st.title("Crowd Monitoring Dashboard")
 
 ALERT_THRESHOLD = st.slider("Alert Threshold", 5, 50, 10)
 
@@ -59,6 +90,10 @@ if "email_sent" not in st.session_state:
 if "count_buffer" not in st.session_state:
     st.session_state.count_buffer = deque(maxlen=5)
 
+
+# =========================
+# VIDEO PROCESSING
+# =========================
 if uploaded_file is not None:
     with open("temp_video.mp4", "wb") as f:
         f.write(uploaded_file.read())
@@ -70,17 +105,18 @@ if uploaded_file is not None:
         if not ret:
             break
 
-        # Preprocess
-        input_tensor = preprocess_frame(frame,device).to(device)
+        input_tensor = preprocess_frame(frame, device).to(device)
 
         with torch.no_grad():
             density = model(input_tensor)
 
         count = density.sum().item()
 
-        # Smooth count
         st.session_state.count_buffer.append(count)
-        smooth_count = int(sum(st.session_state.count_buffer) / len(st.session_state.count_buffer))
+        smooth_count = int(
+            sum(st.session_state.count_buffer) /
+            len(st.session_state.count_buffer)
+        )
 
         heatmap = density_to_heatmap(density, frame.shape)
         overlay = cv2.addWeighted(frame, 0.6, heatmap, 0.4, 0)
@@ -95,8 +131,13 @@ if uploaded_file is not None:
             color = (0, 255, 0)
 
         cv2.putText(
-            overlay, f"Count: {smooth_count}",
-            (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2
+            overlay,
+            f"Count: {smooth_count}",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            color,
+            2
         )
 
         frame_placeholder.image(
@@ -105,7 +146,6 @@ if uploaded_file is not None:
         )
         status_placeholder.subheader(status)
 
-        # EMAIL LOGIC (SEND ONCE PER ALERT)
         if alert_active and not st.session_state.email_sent:
             send_email_alert(smooth_count)
             st.session_state.email_sent = True
@@ -113,6 +153,6 @@ if uploaded_file is not None:
         if not alert_active:
             st.session_state.email_sent = False
 
-        time.sleep(0.03)  # limit CPU usage
+        time.sleep(0.03)
 
     cap.release()
