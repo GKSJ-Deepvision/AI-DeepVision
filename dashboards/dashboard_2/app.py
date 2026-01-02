@@ -77,7 +77,7 @@ st.title("Crowd Monitoring Dashboard 2")
 
 model, device = load_model()
 
-ALERT_THRESHOLD = st.slider("Alert Threshold", 5, 50, 10)
+ALERT_THRESHOLD = st.slider("Alert Threshold", 5, 200, 10)
 
 uploaded_file = st.file_uploader("Upload Crowd Video", type=["mp4", "avi"])
 
@@ -156,4 +156,5 @@ if uploaded_file is not None:
         time.sleep(0.03)
 
     cap.release()
+
 
