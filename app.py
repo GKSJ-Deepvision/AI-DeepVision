@@ -22,7 +22,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "csrnet_epoch105.pth")
 
-# 🔗 MODEL DOWNLOAD URL (YOUR FILE)
+# 🔗 MODEL DOWNLOAD URL (GitHub Release)
 MODEL_URL = "https://github.com/GKSJ-Deepvision/AI-DeepVision/releases/download/v1.0/csrnet_epoch105.pth"
 
 # ================= CONFIG =================
@@ -35,9 +35,14 @@ os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 # ================= ENSURE MODEL EXISTS =================
 def ensure_model():
     if not os.path.exists(MODEL_PATH):
-        st.warning("⬇️ Downloading CSRNet model (~53MB)...")
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        st.success("✅ Model downloaded")
+        with st.spinner("⬇️ Downloading CSRNet model (one-time setup)..."):
+            try:
+                urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+            except Exception as e:
+                st.error("❌ Failed to download model")
+                st.error(str(e))
+                st.stop()
+        st.success("✅ Model downloaded successfully")
 
 ensure_model()
 
@@ -46,11 +51,11 @@ if "alert_sent" not in st.session_state:
     st.session_state.alert_sent = False
 
 # ================= LOAD MODEL =================
-@st.cache_resource
+@st.cache_resource(show_spinner="🧠 Loading CSRNet model...")
 def load_model():
     model = CSRNet().to(DEVICE)
-    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
 
+    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
     state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) else checkpoint
 
     fixed_state = {
@@ -72,7 +77,7 @@ def preprocess(frame):
     frame = frame.astype(np.float32) / 255.0
 
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
     frame = (frame - mean) / std
 
     tensor = torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0)
@@ -114,9 +119,7 @@ def process_frame(frame):
 
 # ================= UI =================
 st.title("🧠 DeepVision Crowd Monitor")
-st.info("📌 Webcam works locally | Upload Video works on Streamlit Cloud")
-
-mode = st.radio("Select Input Mode", ["Upload Video"])
+st.info("📌 Upload Video works on Streamlit Cloud")
 
 frame_box = st.image([])
 count_box = st.empty()
