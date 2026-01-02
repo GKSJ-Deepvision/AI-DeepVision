@@ -1,10 +1,10 @@
-import smtplib, ssl
+import smtplib
+import ssl
 from email.message import EmailMessage
 from datetime import datetime
 import os
+import streamlit as st
 
-EMAIL = "receiver@gmail.com"          # 🔴 change this
-APP_PASSWORD = "receiverpassword"     # 🔴 Gmail App Password
 PORT = 465
 
 def send_email(to_email, count, alert_text, fps, snapshot_path=None):
@@ -21,7 +21,7 @@ FPS: {fps:.2f}
 
     msg = EmailMessage()
     msg["Subject"] = "🚨 DeepVision Crowd Alert"
-    msg["From"] = EMAIL
+    msg["From"] = st.secrets["EMAIL_USER"]
     msg["To"] = to_email
     msg.set_content(body)
 
@@ -39,7 +39,10 @@ FPS: {fps:.2f}
 
     context = ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com", PORT, context=context) as server:
-        server.login(EMAIL, APP_PASSWORD)
+        server.login(
+            st.secrets["EMAIL_USER"],
+            st.secrets["EMAIL_PASS"]
+        )
         server.send_message(msg)
 
     print(f"✅ Alert email sent to {to_email} at {now}")
