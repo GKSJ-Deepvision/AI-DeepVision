@@ -2,12 +2,10 @@ import cv2
 import torch
 import numpy as np
 import streamlit as st
-import time
 import os
-import urllib.request
+import requests
 
 from csrnet_model import CSRNet
-from alert import send_email
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -22,33 +20,32 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "csrnet_epoch105.pth")
 
-# 🔗 MODEL DOWNLOAD URL (GitHub Release)
+# 🔗 GitHub Release Direct Download (IMPORTANT)
 MODEL_URL = "https://github.com/GKSJ-Deepvision/AI-DeepVision/releases/download/v1.0/csrnet_epoch105.pth"
 
 # ================= CONFIG =================
 CROWD_THRESHOLD = 70
-ALERT_EMAIL = "receiver@gmail.com"
 
-SNAPSHOT_DIR = os.path.join(BASE_DIR, "snapshots")
-os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+# ================= DOWNLOAD MODEL (SAFE METHOD) =================
+def download_model():
+    if os.path.exists(MODEL_PATH):
+        return
 
-# ================= ENSURE MODEL EXISTS =================
-def ensure_model():
-    if not os.path.exists(MODEL_PATH):
-        with st.spinner("⬇️ Downloading CSRNet model (one-time setup)..."):
-            try:
-                urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-            except Exception as e:
-                st.error("❌ Failed to download model")
-                st.error(str(e))
-                st.stop()
-        st.success("✅ Model downloaded successfully")
+    st.warning("⬇️ Downloading CSRNet model (one-time setup)...")
 
-ensure_model()
+    response = requests.get(MODEL_URL, stream=True)
+    if response.status_code != 200:
+        st.error("❌ Failed to download model from GitHub Release")
+        st.stop()
 
-# ================= SESSION STATE =================
-if "alert_sent" not in st.session_state:
-    st.session_state.alert_sent = False
+    with open(MODEL_PATH, "wb") as f:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+
+    st.success("✅ Model downloaded successfully")
+
+download_model()
 
 # ================= LOAD MODEL =================
 @st.cache_resource(show_spinner="🧠 Loading CSRNet model...")
@@ -58,12 +55,9 @@ def load_model():
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
     state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) else checkpoint
 
-    fixed_state = {
-        k.replace("module.", "").replace("core.", ""): v
-        for k, v in state_dict.items()
-    }
+    clean_state = {k.replace("module.", ""): v for k, v in state_dict.items()}
 
-    model.load_state_dict(fixed_state, strict=True)
+    model.load_state_dict(clean_state, strict=True)
     model.eval()
     return model
 
@@ -76,8 +70,8 @@ def preprocess(frame):
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     frame = frame.astype(np.float32) / 255.0
 
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
     frame = (frame - mean) / std
 
     tensor = torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0)
@@ -86,54 +80,39 @@ def preprocess(frame):
 # ================= PROCESS FRAME =================
 def process_frame(frame):
     h, w, _ = frame.shape
-    input_tensor = preprocess(frame)
+    tensor = preprocess(frame)
 
     with torch.no_grad():
-        density = model(input_tensor)
+        density = model(tensor)
 
     density_map = density.squeeze().cpu().numpy()
     density_map[density_map < 0] = 0
     count = int(density_map.sum())
 
-    density_vis = cv2.resize(density_map, (w, h))
-    density_norm = density_vis / density_vis.max() if density_vis.max() > 0 else density_vis
-
     heatmap = cv2.applyColorMap(
-        (density_norm * 255).astype(np.uint8),
+        (cv2.resize(density_map, (w, h)) * 255 / (density_map.max() + 1e-6)).astype(np.uint8),
         cv2.COLORMAP_JET
     )
 
-    overlay = cv2.addWeighted(frame, 0.75, heatmap, 0.25, 0)
-
-    cv2.rectangle(overlay, (0, 0), (w, 55), (0, 0, 0), -1)
-    cv2.putText(overlay, f"Count: {count}", (20, 38),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-
-    status = "CROWD ALERT" if count >= CROWD_THRESHOLD else "CROWD NORMAL"
-    color = (0, 0, 255) if count >= CROWD_THRESHOLD else (0, 255, 0)
-
-    cv2.putText(overlay, status, (260, 38),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, color, 3)
-
+    overlay = cv2.addWeighted(frame, 0.7, heatmap, 0.3, 0)
     return overlay, count
 
 # ================= UI =================
 st.title("🧠 DeepVision Crowd Monitor")
-st.info("📌 Upload Video works on Streamlit Cloud")
+st.info("📌 Upload video to analyze crowd density")
+
+video = st.file_uploader("Upload a video", type=["mp4", "avi"])
 
 frame_box = st.image([])
 count_box = st.empty()
 alert_box = st.empty()
 
-# ================= VIDEO MODE =================
-video = st.file_uploader("Upload a video", type=["mp4", "avi"])
-
 if video:
-    temp_video = os.path.join(BASE_DIR, "temp.mp4")
-    with open(temp_video, "wb") as f:
+    temp_path = os.path.join(BASE_DIR, "temp.mp4")
+    with open(temp_path, "wb") as f:
         f.write(video.read())
 
-    cap = cv2.VideoCapture(temp_video)
+    cap = cv2.VideoCapture(temp_path)
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -150,4 +129,4 @@ if video:
             alert_box.success("✅ Crowd Level Normal")
 
     cap.release()
-    st.success("🎉 Video processed successfully!")
+    st.success("🎉 Video processed successfully")
