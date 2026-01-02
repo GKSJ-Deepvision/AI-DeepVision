@@ -6,7 +6,7 @@ import time
 import os
 
 from csrnet_model import CSRNet
-from alert import send_email   # 🔔 EMAIL ALERT MODULE (USES SECRETS)
+from alert import send_email   # 🔔 EMAIL ALERT MODULE
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -17,14 +17,15 @@ st.set_page_config(
 # ================= DEVICE =================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# ================= PATH FIX (VERY IMPORTANT) =================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "csrnet_epoch105.pth")
+
 # ================= CONFIG =================
-MODEL_PATH = "csrnet_epoch105.pth"
 CROWD_THRESHOLD = 70
+ALERT_EMAIL = "receiver@gmail.com"   # receiver email
 
-# 👉 Receiver email (OK to keep here)
-ALERT_EMAIL = "receiver@gmail.com"
-
-SNAPSHOT_DIR = "snapshots"
+SNAPSHOT_DIR = os.path.join(BASE_DIR, "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 # ================= SESSION STATE =================
@@ -112,7 +113,7 @@ frame_box = st.image([])
 count_box = st.empty()
 alert_box = st.empty()
 
-# ================= WEBCAM MODE (LOCAL USE) =================
+# ================= WEBCAM MODE (LOCAL ONLY) =================
 if mode == "Webcam":
     start = st.checkbox("▶ Start Webcam")
 
@@ -138,7 +139,9 @@ if mode == "Webcam":
                 alert_box.error("🚨 OVERCROWDING DETECTED")
 
                 if not st.session_state.alert_sent:
-                    snapshot_path = f"{SNAPSHOT_DIR}/alert_{int(time.time())}.jpg"
+                    snapshot_path = os.path.join(
+                        SNAPSHOT_DIR, f"alert_{int(time.time())}.jpg"
+                    )
                     cv2.imwrite(snapshot_path, overlay)
 
                     send_email(
@@ -161,10 +164,11 @@ if mode == "Upload Video":
     video = st.file_uploader("Upload a video", type=["mp4", "avi"])
 
     if video:
-        with open("temp.mp4", "wb") as f:
+        temp_video = os.path.join(BASE_DIR, "temp.mp4")
+        with open(temp_video, "wb") as f:
             f.write(video.read())
 
-        cap = cv2.VideoCapture("temp.mp4")
+        cap = cv2.VideoCapture(temp_video)
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         frame_id = 0
@@ -199,7 +203,9 @@ if mode == "Upload Video":
                 alert_box.error("🚨 OVERCROWDING DETECTED")
 
                 if not st.session_state.alert_sent:
-                    snapshot_path = f"{SNAPSHOT_DIR}/alert_{int(time.time())}.jpg"
+                    snapshot_path = os.path.join(
+                        SNAPSHOT_DIR, f"alert_{int(time.time())}.jpg"
+                    )
                     cv2.imwrite(snapshot_path, overlay)
 
                     send_email(
