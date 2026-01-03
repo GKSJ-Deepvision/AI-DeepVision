@@ -6,14 +6,8 @@ import numpy as np
 from torchvision import models, transforms
 import tempfile
 
-# -----------------------
-# DEVICE
-# -----------------------
 device = torch.device("cpu")
 
-# -----------------------
-# CSRNet MODEL
-# -----------------------
 class CSRNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -32,9 +26,6 @@ class CSRNet(nn.Module):
     def forward(self, x):
         return self.output_layer(self.backend(self.frontend(x)))
 
-# -----------------------
-# LOAD MODEL
-# -----------------------
 @st.cache_resource
 def load_model():
     model = CSRNet().to(device)
@@ -44,9 +35,6 @@ def load_model():
 
 model = load_model()
 
-# -----------------------
-# TRANSFORM
-# -----------------------
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(
@@ -55,93 +43,62 @@ transform = transforms.Compose([
     )
 ])
 
-# -----------------------
-# UI
-# -----------------------
 st.title("CSRNet Crowd Counting System")
 
-option = st.radio("Select input type:", ["Image", "Video"])
+mode = st.radio("Choose input type:", ["Image", "Video"])
 
-# -----------------------
-# IMAGE PROCESSING
-# -----------------------
-if option == "Image":
-    img_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
-
-    if img_file:
-        image = np.array(bytearray(img_file.read()), dtype=np.uint8)
-        image = cv2.imdecode(image, cv2.IMREAD_COLOR)
-        h, w = image.shape[:2]
-
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        img = transform(rgb).unsqueeze(0).to(device)
+if mode == "Image":
+    file = st.file_uploader("Upload image", type=["jpg", "png", "jpeg"])
+    if file:
+        img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
+        h, w = img.shape[:2]
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        tensor = transform(rgb).unsqueeze(0)
 
         with torch.no_grad():
-            density = torch.relu(model(img))
+            density = torch.relu(model(tensor))
 
         count = int(density.sum().item())
-
-        density_map = density.squeeze().cpu().numpy()
-        density_map = cv2.resize(density_map, (w, h))
+        dm = cv2.resize(density.squeeze().numpy(), (w, h))
         heatmap = cv2.applyColorMap(
-            cv2.normalize(density_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8),
+            cv2.normalize(dm, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8),
             cv2.COLORMAP_JET
         )
+        overlay = cv2.addWeighted(img, 0.6, heatmap, 0.4, 0)
+        st.image(overlay, channels="BGR")
+        st.success(f"Estimated Crowd Count: {count}")
 
-        overlay = cv2.addWeighted(image, 0.6, heatmap, 0.4, 0)
-
-        st.image(overlay, channels="BGR", caption=f"Estimated Count: {count}")
-
-        if count > 100:
-            st.error(f"ALERT! Crowd Count: {count}")
-        else:
-            st.success(f"Safe Crowd Count: {count}")
-
-# -----------------------
-# VIDEO PROCESSING
-# -----------------------
-if option == "Video":
-    vid_file = st.file_uploader("Upload Video (short)", type=["mp4", "avi"])
-
-    if vid_file:
-        tfile = tempfile.NamedTemporaryFile(delete=False)
-        tfile.write(vid_file.read())
-
-        cap = cv2.VideoCapture(tfile.name)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        step = int(fps * 2)
-        processed = 0
-        MAX_FRAMES = 20
+if mode == "Video":
+    file = st.file_uploader("Upload short video", type=["mp4", "avi"])
+    if file:
+        temp = tempfile.NamedTemporaryFile(delete=False)
+        temp.write(file.read())
+        cap = cv2.VideoCapture(temp.name)
 
         st.info("Processing video...")
+        frames = 0
 
-        while cap.isOpened() and processed < MAX_FRAMES:
+        while cap.isOpened() and frames < 15:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            if int(cap.get(cv2.CAP_PROP_POS_FRAMES)) % step != 0:
-                continue
-
-            processed += 1
             h, w = frame.shape[:2]
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = transform(rgb).unsqueeze(0).to(device)
+            tensor = transform(rgb).unsqueeze(0)
 
             with torch.no_grad():
-                density = torch.relu(model(img))
+                density = torch.relu(model(tensor))
 
             count = int(density.sum().item())
-
-            density_map = density.squeeze().cpu().numpy()
-            density_map = cv2.resize(density_map, (w, h))
+            dm = cv2.resize(density.squeeze().numpy(), (w, h))
             heatmap = cv2.applyColorMap(
-                cv2.normalize(density_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8),
+                cv2.normalize(dm, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8),
                 cv2.COLORMAP_JET
             )
-
             overlay = cv2.addWeighted(frame, 0.6, heatmap, 0.4, 0)
 
-            st.image(overlay, channels="BGR", caption=f"Frame Crowd Count: {count}")
+            st.image(overlay, channels="BGR", caption=f"Count: {count}")
+            frames += 1
 
         cap.release()
