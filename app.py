@@ -2,25 +2,50 @@ import cv2
 import torch
 import streamlit as st
 import numpy as np
+import os
+import gdown
+import sqlite3
 
 from csrnet_model import CSRNet
 from utils_email import init_db, get_all_emails, send_alert_emails
 
 # ================= CONFIG =================
-st.set_page_config(page_title="Crowd Monitoring System (CSRNet)", layout="wide")
+st.set_page_config(
+    page_title="Crowd Monitoring System (CSRNet)",
+    layout="wide"
+)
 
-DEVICE = "cpu"   # CSRNet is stable on CPU
-MODEL_PATH = r"C:\Users\Shiva Teja\Desktop\DeepVision\models\csrnet_video_finetuned_final.pth"
+DEVICE = "cpu"
+DENSITY_ALERT_THRESHOLD = 70.0
 
-DENSITY_ALERT_THRESHOLD = 70.0   # Crowd Density Index threshold
+# ================= PATHS (CRITICAL FOR CLOUD) =================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "csrnet_video_finetuned_final.pth")
+VIDEO_PATH = os.path.join(BASE_DIR, "temp.mp4")
+DB_PATH = os.path.join(BASE_DIR, "emails.db")
 
+# -------- Google Drive Model Config --------
+GDRIVE_FILE_ID = "1ax1G5Q1s5lmD6MVa8w2EOU26gX4QCfaC"
+
+# ================= INIT DB =================
 init_db()
+
+
+# ================= DOWNLOAD MODEL =================
+@st.cache_resource
+def download_model():
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner("⬇️ Downloading CSRNet model from Google Drive..."):
+            url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
+            gdown.download(url, MODEL_PATH, quiet=False)
+    return MODEL_PATH
 
 # ================= LOAD MODEL =================
 @st.cache_resource
 def load_model():
+    download_model()
     model = CSRNet()
-    state = torch.load(MODEL_PATH, map_location="cpu")
+    state = torch.load(MODEL_PATH, map_location=DEVICE)
     model.load_state_dict(state, strict=False)
     model.eval()
     return model
@@ -34,27 +59,18 @@ def process_frame(frame):
     img = cv2.resize(frame, (640, 360))
     img = img.astype(np.float32) / 255.0
 
-    # ImageNet normalization (CSRNet requirement)
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
     img = (img - mean) / std
 
-    img_t = (
-        torch.from_numpy(img)
-        .permute(2, 0, 1)
-        .unsqueeze(0)
-        .float()
-    )
+    img_t = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float()
 
     with torch.no_grad():
         density = torch.relu(model(img_t))
 
     density_map = density.squeeze().cpu().numpy()
-
-    # ---- Crowd Density Index ----
     density_index = float(density_map.sum())
 
-    # ---- Density Map Visualization ----
     density_map = cv2.GaussianBlur(density_map, (13, 13), 0)
     density_map = cv2.resize(density_map, (W, H))
 
@@ -100,10 +116,9 @@ def estimate_from_video(video_path, n_frames=10):
     if not density_values:
         return None, 0.0
 
-    avg_density_index = float(np.mean(density_values))
-    return last_overlay, avg_density_index
+    return last_overlay, float(np.mean(density_values))
 
-# ================= UI =================
+# ================= MAIN UI =================
 st.title("🧠 Crowd Monitoring System (CSRNet)")
 
 uploaded_file = st.file_uploader(
@@ -112,10 +127,10 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-    with open("temp.mp4", "wb") as f:
+    with open(VIDEO_PATH, "wb") as f:
         f.write(uploaded_file.read())
 
-    overlay, density_index = estimate_from_video("temp.mp4")
+    overlay, density_index = estimate_from_video(VIDEO_PATH)
 
     if overlay is not None:
         col1, col2 = st.columns([3, 1])
@@ -128,7 +143,6 @@ if uploaded_file:
 
             if density_index >= DENSITY_ALERT_THRESHOLD:
                 st.error("⚠️ CROWD DENSITY ALERT")
-                send_alert_emails(get_all_emails(), density_index)
                 msg = send_alert_emails(get_all_emails(), density_index)
                 st.warning(msg)
             else:
