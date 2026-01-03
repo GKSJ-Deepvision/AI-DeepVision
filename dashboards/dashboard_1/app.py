@@ -78,7 +78,7 @@ st.markdown("CSRNet-based crowd density estimation with alerts")
 
 model, device = load_model()
 
-ALERT_THRESHOLD = st.slider("Alert Threshold", 5, 50, 10)
+ALERT_THRESHOLD = st.slider("Alert Threshold", 5, 200, 10)
 
 mode = st.radio(
     "Select Input Mode",
@@ -239,3 +239,4 @@ if mode == "Live Webcam":
 
         if not alert_active:
             st.session_state.email_sent = False
+
