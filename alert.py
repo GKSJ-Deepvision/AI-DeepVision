@@ -7,7 +7,10 @@ import streamlit as st
 
 PORT = 465
 
-def send_email(to_email, count, alert_text, fps, snapshot_path=None):
+# ✅ RECEIVER EMAIL ADDED HERE
+RECEIVER_EMAIL = "thenovavoyage00@gmail.com"
+
+def send_email(count, alert_text, fps, snapshot_path=None):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     body = f"""
@@ -22,9 +25,10 @@ FPS: {fps:.2f}
     msg = EmailMessage()
     msg["Subject"] = "🚨 DeepVision Crowd Alert"
     msg["From"] = st.secrets["EMAIL_USER"]
-    msg["To"] = to_email
+    msg["To"] = RECEIVER_EMAIL
     msg.set_content(body)
 
+    # Optional snapshot attachment
     if snapshot_path and os.path.exists(snapshot_path):
         with open(snapshot_path, "rb") as f:
             img_data = f.read()
@@ -45,4 +49,4 @@ FPS: {fps:.2f}
         )
         server.send_message(msg)
 
-    print(f"✅ Alert email sent to {to_email} at {now}")
+    print(f"✅ Alert email sent to {RECEIVER_EMAIL} at {now}")
