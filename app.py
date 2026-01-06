@@ -20,13 +20,13 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "csrnet_epoch105.pth")
 
-# 🔗 GitHub Release Direct Download (IMPORTANT)
-MODEL_URL = "https://github.com/GKSJ-Deepvision/AI-DeepVision/releases/download/v1.0/csrnet_epoch105.pth"
+# 🔗 GitHub Direct Download
+MODEL_URL = "https://raw.githubusercontent.com/GKSJ-Deepvision/AI-DeepVision/Sanjay_Kumar/csrnet_epoch105.pth"
 
 # ================= CONFIG =================
 CROWD_THRESHOLD = 70
 
-# ================= DOWNLOAD MODEL (SAFE METHOD) =================
+# ================= DOWNLOAD MODEL =================
 def download_model():
     if os.path.exists(MODEL_PATH):
         return
@@ -35,7 +35,7 @@ def download_model():
 
     response = requests.get(MODEL_URL, stream=True)
     if response.status_code != 200:
-        st.error("❌ Failed to download model from GitHub Release")
+        st.error("❌ Failed to download model")
         st.stop()
 
     with open(MODEL_PATH, "wb") as f:
@@ -52,17 +52,21 @@ download_model()
 def load_model():
     model = CSRNet().to(DEVICE)
 
-    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
-    state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) else checkpoint
+    state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
+    clean_state = {}
 
-    clean_state = {k.replace("module.", ""): v for k, v in state_dict.items()}
+    for k, v in state_dict.items():
+        if k.startswith("module."):
+            k = k.replace("module.", "")
+        if k.startswith("core."):
+            k = k.replace("core.", "")
+        clean_state[k] = v
 
     model.load_state_dict(clean_state, strict=True)
     model.eval()
     return model
 
 model = load_model()
-st.success("✅ CSRNet model loaded successfully")
 
 # ================= PREPROCESS =================
 def preprocess(frame):
@@ -70,15 +74,17 @@ def preprocess(frame):
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     frame = frame.astype(np.float32) / 255.0
 
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
     frame = (frame - mean) / std
+    frame = frame.astype(np.float32)
 
     tensor = torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0)
     return tensor.to(DEVICE)
 
 # ================= PROCESS FRAME =================
-def process_frame(frame):
+def process_frame(frame, model):
     h, w, _ = frame.shape
     tensor = preprocess(frame)
 
@@ -99,34 +105,98 @@ def process_frame(frame):
 
 # ================= UI =================
 st.title("🧠 DeepVision Crowd Monitor")
-st.info("📌 Upload video to analyze crowd density")
+st.info("📌 Analyze crowd density using Video or Live Webcam")
 
-video = st.file_uploader("Upload a video", type=["mp4", "avi"])
+mode = st.radio(
+    "Select Input Source",
+    ["Upload Video", "Live Webcam"],
+    horizontal=True
+)
 
 frame_box = st.image([])
 count_box = st.empty()
 alert_box = st.empty()
 
-if video:
-    temp_path = os.path.join(BASE_DIR, "temp.mp4")
-    with open(temp_path, "wb") as f:
-        f.write(video.read())
+# ================= VIDEO MODE =================
+if mode == "Upload Video":
+    video = st.file_uploader("Upload a video", type=["mp4", "avi"])
 
-    cap = cv2.VideoCapture(temp_path)
+    if video:
+        temp_path = os.path.join(BASE_DIR, "temp.mp4")
+        with open(temp_path, "wb") as f:
+            f.write(video.read())
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+        cap = cv2.VideoCapture(temp_path)
 
-        overlay, count = process_frame(frame)
-        frame_box.image(overlay, channels="BGR")
-        count_box.metric("👥 Crowd Count", count)
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        if count >= CROWD_THRESHOLD:
-            alert_box.error("🚨 OVERCROWDING DETECTED")
-        else:
-            alert_box.success("✅ Crowd Level Normal")
+            overlay, count = process_frame(frame, model)
 
-    cap.release()
-    st.success("🎉 Video processed successfully")
+            frame_box.image(overlay, channels="BGR")
+            count_box.metric("👥 Crowd Count", count)
+
+            if count >= CROWD_THRESHOLD:
+                alert_box.error("🚨 OVERCROWDING DETECTED")
+            else:
+                alert_box.success("✅ Crowd Level Normal")
+
+        cap.release()
+        st.success("🎉 Video processed successfully")
+
+# ================= LIVE WEBCAM MODE =================
+elif mode == "Live Webcam":
+    start = st.button("▶️ Start Webcam")
+    stop = st.button("⏹ Stop Webcam")
+
+    if "run_cam" not in st.session_state:
+        st.session_state.run_cam = False
+
+    if "count_buffer" not in st.session_state:
+        st.session_state.count_buffer = []
+
+    if start:
+        st.session_state.run_cam = True
+        st.session_state.count_buffer = []
+
+    if stop:
+        st.session_state.run_cam = False
+
+    if st.session_state.run_cam:
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+        frame_id = 0
+        SKIP_FRAMES = 5  # stabilize output
+
+        while st.session_state.run_cam and cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_id += 1
+            if frame_id % SKIP_FRAMES != 0:
+                continue
+
+            frame = cv2.flip(frame, 1)
+
+            overlay, count = process_frame(frame, model)
+
+            st.session_state.count_buffer.append(count)
+            if len(st.session_state.count_buffer) > 10:
+                st.session_state.count_buffer.pop(0)
+
+            smooth_count = int(np.mean(st.session_state.count_buffer))
+
+            frame_box.image(overlay, channels="BGR")
+            count_box.metric("👥 Crowd Count", smooth_count)
+
+            if smooth_count >= CROWD_THRESHOLD:
+                alert_box.error("🚨 OVERCROWDING DETECTED")
+            else:
+                alert_box.success("✅ Crowd Level Normal")
+
+        cap.release()
